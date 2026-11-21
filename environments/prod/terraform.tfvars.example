@@ -1,0 +1,14 @@
+project                     = "platform"
+environment                 = "prod"
+aws_region                  = "us-east-1"
+vpc_cidr                    = "10.1.0.0/16"
+az_count                    = 3
+state_bucket_name           = "my-org-platform-tfstate-prod"
+state_lock_table            = "terraform-state-lock"
+lambda_timeout              = 30
+lambda_memory_size          = 512
+lambda_reserved_concurrency = 10
+extra_tags = {
+  Owner      = "platform-team"
+  CostCenter = "engineering"
+}
