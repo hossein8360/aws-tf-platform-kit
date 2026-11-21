@@ -40,7 +40,13 @@ variable "enable_flow_logs" {
 variable "flow_logs_retention_days" {
   description = "CloudWatch log retention in days for VPC Flow Logs."
   type        = number
-  default     = 30
+  default     = 365
+}
+
+variable "kms_key_arn" {
+  description = "ARN of the KMS key used to encrypt the Flow Logs CloudWatch log group."
+  type        = string
+  default     = ""
 }
 
 variable "flow_logs_iam_role_arn" {

@@ -35,6 +35,36 @@ resource "aws_cloudwatch_log_group" "lambda" {
   tags = local.common_tags
 }
 
+# ── Code Signing (optional) ───────────────────────────────────────────────────
+
+resource "aws_signer_signing_profile" "this" {
+  count = var.enable_code_signing ? 1 : 0
+
+  name_prefix = replace(var.function_name, "-", "_")
+  platform_id = "AWSLambda-SHA384-ECDSA"
+
+  signature_validity_period {
+    value = 5
+    type  = "YEARS"
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_lambda_code_signing_config" "this" {
+  count = var.enable_code_signing ? 1 : 0
+
+  allowed_publishers {
+    signing_profile_version_arns = [aws_signer_signing_profile.this[0].version_arn]
+  }
+
+  policies {
+    untrusted_artifact_on_deployment = "Enforce"
+  }
+
+  description = "${var.function_name} code signing"
+}
+
 # ── Lambda Function ───────────────────────────────────────────────────────────
 
 resource "aws_lambda_function" "handler" {
@@ -50,6 +80,10 @@ resource "aws_lambda_function" "handler" {
   source_code_hash = data.archive_file.handler.output_base64sha256
 
   reserved_concurrent_executions = var.reserved_concurrency
+
+  kms_key_arn = var.kms_key_arn
+
+  code_signing_config_arn = var.enable_code_signing ? aws_lambda_code_signing_config.this[0].arn : null
 
   environment {
     variables = {
@@ -83,19 +117,19 @@ resource "aws_lambda_function" "handler" {
 # ── SQS — Dead-Letter Queue ───────────────────────────────────────────────────
 
 resource "aws_sqs_queue" "dlq" {
-  name                       = "${var.function_name}-dlq"
-  message_retention_seconds  = 1209600 # 14 days
-  kms_master_key_id          = var.kms_key_arn != "" ? var.kms_key_arn : null
-  sqs_managed_sse_enabled    = var.kms_key_arn == "" ? true : false
+  name                      = "${var.function_name}-dlq"
+  message_retention_seconds = 1209600
+
+  kms_master_key_id = var.kms_key_arn
 
   tags = merge(local.common_tags, { Name = "${var.function_name}-dlq" })
 }
 
 data "aws_iam_policy_document" "dlq" {
   statement {
-    sid     = "AllowLambdaSend"
-    effect  = "Allow"
-    actions = ["sqs:SendMessage"]
+    sid       = "AllowLambdaSend"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
     resources = ["*"]
 
     principals {
@@ -121,8 +155,8 @@ resource "aws_sqs_queue_policy" "dlq" {
 resource "aws_sqs_queue" "processor" {
   name                       = "${var.function_name}-processor"
   visibility_timeout_seconds = var.timeout * 6
-  kms_master_key_id          = var.kms_key_arn != "" ? var.kms_key_arn : null
-  sqs_managed_sse_enabled    = var.kms_key_arn == "" ? true : false
+
+  kms_master_key_id = var.kms_key_arn
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.dlq.arn
@@ -134,9 +168,9 @@ resource "aws_sqs_queue" "processor" {
 
 data "aws_iam_policy_document" "processor_queue" {
   statement {
-    sid     = "DenyInsecureTransport"
-    effect  = "Deny"
-    actions = ["sqs:*"]
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["sqs:*"]
     resources = ["*"]
 
     principals {

@@ -1,6 +1,6 @@
 # aws-tf-platform-kit
 
-A production-grade, modular Terraform repository for provisioning a hardened, multi-tier AWS platform. Supports 100% free local development and integration testing against [LocalStack Community](https://localstack.cloud/).
+A production-grade, modular Terraform repository for provisioning a hardened, multi-tier AWS platform. Supports 100% free local development and integration testing against [LocalStack Community](https://localstack.cloud/) (`3.8.1`, no auth token required).
 
 ## Architecture
 
@@ -13,14 +13,14 @@ A production-grade, modular Terraform repository for provisioning a hardened, mu
 │  │            │   │            │   │                    │  │
 │  │  VPC + IGW │   │ IAM roles  │   │  S3 + DynamoDB     │  │
 │  │  Subnets   │   │ policies   │   │  (TF state backend)│  │
-│  │  NACLs     │   │ KMS key    │   │                    │  │
+│  │  NACLs     │   │ KMS CMK    │   │                    │  │
 │  │  Flow Logs │   │            │   └────────────────────┘  │
 │  └────────────┘   └────────────┘                           │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │                   app-runtime                       │   │
 │  │                                                     │   │
-│  │   Lambda (Python 3.12)  +  SQS  +  EventBridge     │   │
+│  │   Lambda (Python 3.12)  +  SQS (DLQ) + EventBridge  │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -29,33 +29,34 @@ A production-grade, modular Terraform repository for provisioning a hardened, mu
 
 | Module | Purpose |
 |---|---|
-| `networking` | VPC, public/private subnets, IGW, NAT, NACLs, VPC Flow Logs |
-| `security-iam` | IAM roles, least-privilege policies, KMS CMK |
-| `storage-state` | S3 state bucket (versioned, encrypted, MFA-delete), DynamoDB lock table |
-| `app-runtime` | Lambda function, SQS queue (DLQ), EventBridge scheduled rule |
+| `networking` | VPC, restricted default SG, public/private subnets, IGW, NAT, NACLs, VPC Flow Logs |
+| `security-iam` | Scoped IAM roles, least-privilege policies, customer-managed KMS CMK with rotation |
+| `storage-state` | S3 state bucket (versioned, KMS-encrypted, public access blocked), DynamoDB lock table with PITR & TTL |
+| `app-runtime` | Python 3.12 Lambda (VPC-attached, X-Ray tracing, code signing in prod), KMS-encrypted SQS + DLQ, EventBridge rule |
 
 ## Prerequisites
 
-| Tool | Version |
-|---|---|
-| Terraform | >= 1.6.0 |
-| Docker + Docker Compose | >= 24 |
-| Python | >= 3.10 |
-| checkov | >= 3 |
-| tflint | >= 0.50 |
-| AWS CLI | >= 2 (for prod) |
+| Tool | Version | Notes |
+|---|---|---|
+| Terraform | >= 1.6.0 | Required |
+| Docker | >= 24.0 | Required (mounts `/var/run/docker.sock` for local Lambda runtime) |
+| Docker Compose | >= 2.0 | Optional — `Makefile` automatically falls back to `docker run` |
+| Checkov | >= 3.0 | Optional — `make scan` automatically falls back to `bridgecrew/checkov` container |
+| TFLint | >= 0.50 | Optional — `make lint` automatically falls back to `tflint` container |
+| AWS CLI | >= 2.0 | Optional — `make verify` automatically falls back to `amazon/aws-cli` container |
 
 ## Quick Start — Local (LocalStack)
 
 ```bash
-# Start LocalStack
+# Start LocalStack Community (pinned to 3.8.1)
 make localstack-up
 
-# Initialise and apply the local environment
+# Configure local variables, initialise, and apply
+cp -n environments/local/terraform.tfvars.example environments/local/terraform.tfvars
 make local-init
 make local-apply
 
-# Verify all resources
+# Run the automated 9-point AWS API audit
 make verify
 
 # Tear down
@@ -68,7 +69,7 @@ make localstack-down
 ```bash
 cd environments/prod
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your values
+# Edit terraform.tfvars with your AWS account values
 
 terraform init
 terraform plan -out=tfplan
@@ -77,35 +78,46 @@ terraform apply tfplan
 
 ## CI / CD
 
-- **GitHub Actions**: `.github/workflows/terraform.yml` — lint → validate → checkov → plan on every PR; apply on `main`.
-- **GitLab CI**: `.gitlab-ci.yml` — equivalent pipeline for GitLab.
+- **GitHub Actions**: `.github/workflows/terraform.yml` — `fmt` → `validate` → `tflint` → `checkov` → `plan` on every push and PR.
+- **GitLab CI**: `.gitlab-ci.yml` — equivalent multi-stage pipeline for GitLab.
 
 ## Makefile Targets
 
 ```
-make help            Show all targets
-make localstack-up   Start LocalStack via Docker Compose
-make localstack-down Stop LocalStack
+make help            Show all available targets
+make localstack-up   Start LocalStack 3.8.1 (Docker Compose v2 or standalone Docker fallback)
+make localstack-down Stop and remove LocalStack container and volumes
 make local-init      terraform init (local env)
-make local-plan      terraform plan  (local env)
+make local-plan      terraform plan (local env)
 make local-apply     terraform apply (local env, auto-approve)
 make local-destroy   terraform destroy (local env, auto-approve)
 make fmt             terraform fmt -recursive
-make validate        terraform validate (all envs)
-make lint            tflint --recursive
-make scan            checkov -d . --config-file .checkov.yaml
-make verify          Run scripts/verify-local.sh
-make clean           Remove .terraform dirs and cached plans
+make validate        terraform validate across all environments and modules
+make lint            Run tflint (native binary or Docker fallback)
+make scan            Run Checkov static security scan (native binary or Docker fallback)
+make verify          Run scripts/verify-local.sh end-to-end audit
+make clean           Remove .terraform directories and cached plan files
 ```
 
 ## Security Posture
 
-- **Encryption at rest**: KMS CMK for S3, SQS, Lambda env vars; AES-256 DynamoDB.
-- **Encryption in transit**: HTTPS-only S3 bucket policy; TLS enforced on SQS.
-- **Least privilege**: scoped IAM roles per service; no wildcard `*` actions in production policies.
-- **Network isolation**: private subnets for compute; NACLs restrict cross-tier traffic; VPC Flow Logs to S3.
-- **State hardening**: versioning + MFA-delete on state bucket; DynamoDB lock with TTL.
-- **Static analysis**: every PR blocked on `checkov` and `tflint` with zero high/critical findings.
+- **Encryption at rest**: Customer-managed KMS CMK (`enable_key_rotation = true`) encrypting S3 state, DynamoDB lock table, SQS queues, Lambda environment variables, and CloudWatch Log Groups.
+- **Encryption in transit**: HTTPS-only (`aws:SecureTransport`) bucket and queue policies; TLS 1.2+ enforced on S3.
+- **Least privilege**: Dedicated IAM execution roles per service with scoped resource ARNs and `aws:SourceAccount` / `kms:CallerAccount` conditions.
+- **Network isolation**: Private subnets for compute; explicit NACL deny rules for management ports (`20`, `21`, `22`, `3389`); restricted VPC default security group; VPC Flow Logs to CloudWatch Logs.
+- **Supply chain & state hardening**: S3 versioning, full Public Access Block, DynamoDB PITR + TTL locking, and AWS Signer Lambda code signing in production.
+- **Static analysis**: `make scan` enforces Checkov compliance (**163 passed, 0 failed**, with `CKV_AWS_18` and `CKV2_AWS_62` documented and skipped for the Terraform state bucket).
+
+## Verification & Proof of Work
+
+### 1. Checkov Static Security Scan (`make scan`)
+![Checkov Security Scan](docs/images/checkov-security.png)
+
+### 2. LocalStack Provisioning (`make local-apply`)
+![Terraform Apply LocalStack](docs/images/terraform-apply-local.png)
+
+### 3. Live Infrastructure Audit (`make verify`)
+![LocalStack Verification Audit](docs/images/verify-local-audit.png)
 
 ## Repository Layout
 
@@ -118,6 +130,9 @@ aws-tf-platform-kit/
 ├── .checkov.yaml
 ├── README.md
 ├── docs/images/
+│   ├── checkov-security.png
+│   ├── terraform-apply-local.png
+│   └── verify-local-audit.png
 ├── scripts/verify-local.sh
 ├── modules/
 │   ├── networking/

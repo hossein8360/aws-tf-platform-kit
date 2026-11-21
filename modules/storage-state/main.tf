@@ -12,8 +12,6 @@ locals {
   common_tags = merge(var.tags, { Module = "storage-state" })
 }
 
-data "aws_caller_identity" "current" {}
-
 # ── S3 State Bucket ───────────────────────────────────────────────────────────
 
 resource "aws_s3_bucket" "state" {
@@ -53,6 +51,7 @@ resource "aws_s3_bucket_public_access_block" "state" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "state" {
+  count  = var.enable_lifecycle ? 1 : 0
   bucket = aws_s3_bucket.state.id
 
   rule {
@@ -144,7 +143,8 @@ resource "aws_dynamodb_table" "lock" {
   }
 
   server_side_encryption {
-    enabled = true
+    enabled     = true
+    kms_key_arn = var.kms_key_arn != "" ? var.kms_key_arn : null
   }
 
   tags = merge(local.common_tags, { Name = var.dynamodb_table_name })

@@ -3,9 +3,9 @@ services:
     image: localstack/localstack:3
     container_name: localstack
     ports:
-      - "4566:4566"
+      - "127.0.0.1:4566:4566"
     environment:
-      - SERVICES=s3,iam,kms,lambda,sqs,dynamodb,ec2,events,logs,sts
+      - SERVICES=ec2,iam,kms,secretsmanager,s3,dynamodb,sqs,lambda,logs,sts,events
       - DEFAULT_REGION=us-east-1
       - DEBUG=0
       - DOCKER_HOST=unix:///var/run/docker.sock

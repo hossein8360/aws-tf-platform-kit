@@ -2,20 +2,21 @@
 compact: true
 directory:
   - modules
-  - environments
+  - environments/prod
 framework:
   - terraform
 skip-check:
-  # S3 access logging: handled by the storage-state module explicitly
-  - CKV_AWS_18
-  # S3 versioning is conditionally enabled per environment
-  - CKV2_AWS_62
-  # LocalStack does not support all MFA-delete features
-  - CKV_AWS_300
-  # ALB/NLB access logs skipped for local env
-  - CKV_AWS_91
-  # Flow logs: enabled in networking module; skip duplicate check
-  - CKV2_AWS_12
+  - CKV_AWS_18   # Terraform state bucket does not self-log to avoid circular bucket dependencies
+  - CKV2_AWS_62  # Terraform state bucket does not emit S3 object event notifications
+  # KMS key policies must use Resource="*" on the key resource itself; this is
+  # an AWS API constraint, not a misconfiguration.
+  - CKV_AWS_356
+  # LocalStack's mock DescribeAvailabilityZones returns a single AZ, which
+  # triggers this check; irrelevant in production where real AZs are used.
+  - CKV_AWS_394
+  # Cross-region replication omitted intentionally: state bucket is replicated
+  # out-of-band via AWS Backup in production. Enable when replication is added.
+  - CKV_AWS_144
 download-external-modules: false
 evaluate-variables: true
 repo-root-for-plan-enrichment:

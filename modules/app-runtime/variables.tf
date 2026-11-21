@@ -14,9 +14,15 @@ variable "execution_role_arn" {
 }
 
 variable "kms_key_arn" {
-  description = "ARN of the KMS key for SQS and CloudWatch log encryption. Leave empty to use SSE-SQS."
+  description = "ARN of the KMS key for SQS, Lambda env-var, and CloudWatch log encryption. Leave empty to use SSE-SQS/unencrypted."
   type        = string
   default     = ""
+}
+
+variable "enable_code_signing" {
+  description = "Create an AWS Signer profile and attach a code-signing config to the Lambda function (CKV_AWS_272)."
+  type        = bool
+  default     = false
 }
 
 variable "timeout" {
@@ -50,7 +56,7 @@ variable "reserved_concurrency" {
 variable "log_retention_days" {
   description = "CloudWatch log group retention in days."
   type        = number
-  default     = 30
+  default     = 365
 }
 
 variable "log_level" {

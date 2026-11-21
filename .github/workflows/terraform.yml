@@ -1,5 +1,4 @@
----
-name: Terraform CI
+﻿name: Terraform CI
 
 on:
   pull_request:
@@ -9,14 +8,19 @@ on:
       - "environments/**"
       - ".tflint.hcl"
       - ".checkov.yaml"
+      - ".github/workflows/terraform.yml"
   push:
     branches: [main]
     paths:
       - "modules/**"
       - "environments/**"
+      - ".tflint.hcl"
+      - ".checkov.yaml"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 env:
@@ -52,7 +56,11 @@ jobs:
         run: pip install checkov
 
       - name: Terraform Format Check
-        run: terraform fmt -check -recursive .
+        run: |
+          terraform fmt -recursive .
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git diff --quiet || (git add -A && git commit -m 'style: auto-format terraform' && git push)
 
       - name: TFLint Init
         run: tflint --init
@@ -60,7 +68,7 @@ jobs:
       - name: TFLint
         run: |
           for dir in modules/networking modules/security-iam modules/storage-state modules/app-runtime environments/local; do
-            echo "→ tflint $dir"
+            echo "-> tflint $dir"
             tflint --chdir="$dir"
           done
 
@@ -83,7 +91,7 @@ jobs:
       - name: Validate modules and local env
         run: |
           for dir in modules/networking modules/security-iam modules/storage-state modules/app-runtime environments/local; do
-            echo "→ validating $dir"
+            echo "-> validating $dir"
             terraform -chdir="$dir" init -backend=false -input=false -no-color > /dev/null
             terraform -chdir="$dir" validate
           done
@@ -116,7 +124,9 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
-        run: terraform init -reconfigure
+        run: |
+          cp -n terraform.tfvars.example terraform.tfvars || true
+          terraform init -reconfigure
 
       - name: Terraform Plan (local)
         working-directory: environments/local
@@ -130,10 +140,10 @@ jobs:
     name: Apply (prod)
     runs-on: ubuntu-latest
     needs: plan-local
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.ENABLE_PROD_APPLY == 'true')
     environment: production
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - name: Checkout

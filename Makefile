@@ -5,26 +5,84 @@ TF_LOCAL  := environments/local
 TF_PROD   := environments/prod
 MODULES   := modules/networking modules/security-iam modules/storage-state modules/app-runtime
 
-# LocalStack endpoint used by verify script
-export AWS_DEFAULT_REGION  ?= us-east-1
-export AWS_ACCESS_KEY_ID   ?= test
+export AWS_DEFAULT_REGION    ?= us-east-1
+export AWS_ACCESS_KEY_ID     ?= test
 export AWS_SECRET_ACCESS_KEY ?= test
-export LOCALSTACK_ENDPOINT ?= http://localhost:4566
+export LOCALSTACK_ENDPOINT   ?= http://localhost:4566
+
+LOCALSTACK_SERVICES := ec2,iam,kms,secretsmanager,s3,dynamodb,sqs,lambda,logs,sts,events
+
+# ── Docker Compose detection ──────────────────────────────────────────────────
+# Prefer docker compose (v2 plugin), fall back to docker-compose (v1 binary),
+# and finally fall back to a plain docker run for environments with neither.
+
+define docker_compose_up
+	@if docker compose version >/dev/null 2>&1; then \
+		docker compose up -d localstack; \
+	elif docker-compose version >/dev/null 2>&1; then \
+		docker-compose up -d localstack; \
+	else \
+		echo "No docker compose found — using docker run"; \
+		docker run -d \
+			--name aws-tf-localstack \
+			-p 127.0.0.1:4566:4566 \
+			-e SERVICES=$(LOCALSTACK_SERVICES) \
+			-e DEFAULT_REGION=$(AWS_DEFAULT_REGION) \
+			localstack/localstack:3; \
+	fi
+endef
+
+define docker_compose_down
+	@if docker compose version >/dev/null 2>&1; then \
+		docker compose down -v; \
+	elif docker-compose version >/dev/null 2>&1; then \
+		docker-compose down -v; \
+	else \
+		docker rm -f aws-tf-localstack 2>/dev/null || true; \
+	fi
+endef
+
+# ── Checkov detection ─────────────────────────────────────────────────────────
+define run_checkov
+	@if command -v checkov >/dev/null 2>&1; then \
+		command -v checkov >/dev/null 2>&1 && checkov -d . --config-file .checkov.yaml || docker run --rm -v "$(PWD):/tf" -w /tf bridgecrew/checkov -d . --config-file .checkov.yaml; \
+	else \
+		echo "checkov not found — running via Docker"; \
+		docker run --rm --tty \
+			-v "$$(pwd):/tf" -w /tf \
+			bridgecrew/command -v checkov >/dev/null 2>&1 && checkov -d . --config-file .checkov.yaml || docker run --rm -v "$(PWD):/tf" -w /tf bridgecrew/checkov -d . --config-file .checkov.yaml; \
+	fi
+endef
+
+# ── TFLint detection ──────────────────────────────────────────────────────────
+define run_tflint
+	@if command -v tflint >/dev/null 2>&1; then \
+		for dir in $(TF_LOCAL) $(MODULES); do \
+			echo "→ tflint $$dir"; \
+			tflint --chdir="$$dir"; \
+		done; \
+	else \
+		echo "tflint not found — running via Docker"; \
+		for dir in $(TF_LOCAL) $(MODULES); do \
+			echo "→ tflint $$dir (docker)"; \
+			docker run --rm --tty \
+				-v "$$(pwd):/tf" -w /tf \
+				ghcr.io/terraform-linters/tflint --chdir="$$dir"; \
+		done; \
+	fi
+endef
 
 ##@ LocalStack
 
 .PHONY: localstack-up
-localstack-up: ## Start LocalStack
-	docker compose up -d localstack
-	@echo "Waiting for LocalStack to be healthy..."
-	@until curl -sf http://localhost:4566/_localstack/health | grep -q '"s3": "available"'; do \
-		sleep 2; \
-	done
-	@echo "LocalStack is ready."
+localstack-up:
+	@if docker compose version >/dev/null 2>&1; then docker compose up -d localstack; else docker rm -f aws-tf-localstack >/dev/null 2>&1 || true; docker run -d --name aws-tf-localstack -p 127.0.0.1:4566:4566 -v /var/run/docker.sock:/var/run/docker.sock -e SERVICES=ec2,iam,kms,secretsmanager,s3,dynamodb,sqs,lambda,logs,sts,events localstack/localstack:3.8.1; fi
+
 
 .PHONY: localstack-down
-localstack-down: ## Stop and remove LocalStack containers
-	docker compose down -v
+localstack-down:
+	@if docker compose version >/dev/null 2>&1; then docker compose down -v; else docker rm -f aws-tf-localstack >/dev/null 2>&1 || true; fi
+
 
 ##@ Terraform – Local
 
@@ -73,15 +131,12 @@ validate: ## Validate all Terraform configurations
 	done
 
 .PHONY: lint
-lint: ## Run tflint on all modules and environments
-	@for dir in $(TF_LOCAL) $(MODULES); do \
-		echo "→ tflint $$dir"; \
-		tflint --chdir=$$dir; \
-	done
+lint: ## Run tflint (native if available, Docker fallback)
+	$(run_tflint)
 
 .PHONY: scan
-scan: ## Run checkov static analysis
-	checkov -d . --config-file .checkov.yaml
+scan: ## Run checkov static analysis (native if available, Docker fallback)
+	$(run_checkov)
 
 .PHONY: verify
 verify: ## Run end-to-end local verification script

@@ -138,6 +138,15 @@ resource "aws_network_acl" "public" {
 
   ingress {
     protocol   = "tcp"
+    rule_no    = 90
+    action     = "deny"
+    cidr_block = "0.0.0.0/0"
+    from_port  = 3389
+    to_port    = 3389
+  }
+
+  ingress {
+    protocol   = "tcp"
     rule_no    = 100
     action     = "allow"
     cidr_block = "0.0.0.0/0"
@@ -169,6 +178,15 @@ resource "aws_network_acl" "public" {
 resource "aws_network_acl" "private" {
   vpc_id     = aws_vpc.this.id
   subnet_ids = aws_subnet.private[*].id
+
+  ingress {
+    protocol   = "tcp"
+    rule_no    = 90
+    action     = "deny"
+    cidr_block = "0.0.0.0/0"
+    from_port  = 3389
+    to_port    = 3389
+  }
 
   ingress {
     protocol   = "-1"
@@ -207,6 +225,7 @@ resource "aws_cloudwatch_log_group" "flow_logs" {
 
   name              = "/aws/vpc/flow-logs/${var.name}"
   retention_in_days = var.flow_logs_retention_days
+  kms_key_id        = var.kms_key_arn
 
   tags = local.common_tags
 }
@@ -220,4 +239,12 @@ resource "aws_flow_log" "this" {
   log_destination = aws_cloudwatch_log_group.flow_logs[0].arn
 
   tags = merge(local.common_tags, { Name = "${var.name}-flow-log" })
+}
+
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.this.id
+
+  tags = merge(var.tags, {
+    Name = "platform-default-sg-restricted"
+  })
 }

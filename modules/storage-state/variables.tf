@@ -32,3 +32,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_lifecycle" {
+  description = "Enable S3 bucket lifecycle rules"
+  type        = bool
+  default     = true
+}

@@ -9,7 +9,8 @@ module "security_iam" {
 }
 
 module "storage_state" {
-  source = "../../modules/storage-state"
+  enable_lifecycle = false
+  source           = "../../modules/storage-state"
 
   bucket_name   = "${var.project}-tfstate-${var.environment}"
   force_destroy = true
@@ -33,11 +34,13 @@ module "networking" {
 module "app_runtime" {
   source = "../../modules/app-runtime"
 
-  function_name      = "${var.project}-handler"
-  environment        = var.environment
-  execution_role_arn = module.security_iam.lambda_exec_role_arn
-  kms_key_arn        = module.security_iam.kms_key_arn
-  log_level          = "DEBUG"
+  function_name        = "${var.project}-handler"
+  environment          = var.environment
+  execution_role_arn   = module.security_iam.lambda_exec_role_arn
+  kms_key_arn          = module.security_iam.kms_key_arn
+  log_level            = "DEBUG"
+  log_retention_days   = 14
+  enable_code_signing  = false
   reserved_concurrency = -1
 
   tags = local.common_tags

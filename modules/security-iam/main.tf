@@ -19,14 +19,20 @@ data "aws_region" "current" {}
 
 data "aws_iam_policy_document" "kms_key" {
   statement {
-    sid     = "RootFullAccess"
-    effect  = "Allow"
-    actions = ["kms:*"]
+    sid       = "RootFullAccess"
+    effect    = "Allow"
+    actions   = ["kms:*"]
     resources = ["*"]
 
     principals {
       type        = "AWS"
       identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:CallerAccount"
+      values   = [data.aws_caller_identity.current.account_id]
     }
   }
 
@@ -48,6 +54,12 @@ data "aws_iam_policy_document" "kms_key" {
         "sqs.amazonaws.com",
         "logs.${data.aws_region.current.name}.amazonaws.com",
       ]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
     }
   }
 }
